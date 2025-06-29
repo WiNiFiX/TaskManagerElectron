@@ -58,6 +58,14 @@ function createWindow() {
     mainWindow.show();
   });
 
+  // Add keyboard shortcut for Developer Tools
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.key === 'F12') {
+      mainWindow.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
   // Emitted when the window is closed
   mainWindow.on('closed', () => {
     mainWindow = null;
