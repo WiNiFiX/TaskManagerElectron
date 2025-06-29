@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electron App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden;
+        }
+
+        .container {
+            text-align: center;
+            padding: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            width: 95%;
+            height: 95%;
+            overflow-y: auto;
+        }
+
+        /* Process Table Styles */
+        .process-section {
+            margin-top: 0;
+            text-align: left;
+        }
+
+        .process-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .process-header h3 {
+            font-size: 1.1rem;
+            margin: 0;
+        }
+
+        .refresh-info {
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+
+        .process-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            overflow: hidden;
+            font-size: 0.75rem;
+        }
+
+        .process-table th {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.5rem;
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .process-table td {
+            padding: 0.4rem 0.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .process-table tr:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .process-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .pid {
+            font-family: 'Courier New', monospace;
+            font-weight: bold;
+        }
+
+        .cpu {
+            color: #ffd700;
+        }
+
+        .memory {
+            color: #ff6b6b;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 1rem;
+            opacity: 0.7;
+        }
+
+        .error {
+            color: #ff6b6b;
+            text-align: center;
+            padding: 0.5rem;
+        }
+
+        .calculator-btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+            margin-top: 1rem;
+        }
+
+        .calculator-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Process List Section -->
+        <div class="process-section">
+            <div class="process-header">
+                <h3>🖥️ System Processes</h3>
+                <div class="refresh-info">
+                    <span id="lastRefresh">Refreshing...</span>
+                </div>
+            </div>
+            <div id="processTableContainer">
+                <div class="loading">Loading processes...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { exec } = require('child_process');
+
+        // Process list functionality
+        function getProcessList() {
+            return new Promise((resolve, reject) => {
+                let command;
+                
+                if (process.platform === 'win32') {
+                    // Windows
+                    command = 'tasklist /FO CSV /NH';
+                } else {
+                    // macOS and Linux
+                    command = 'ps aux';
+                }
+
+                exec(command, (error, stdout, stderr) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve(stdout);
+                });
+            });
+        }
+
+        function parseProcessList(output, platform) {
+            const processes = [];
+            
+            if (platform === 'win32') {
+                // Parse Windows tasklist output
+                const lines = output.trim().split('\n');
+                lines.forEach(line => {
+                    const parts = line.split('","');
+                    if (parts.length >= 5) {
+                        const fullName = parts[0].replace(/"/g, '');
+                        const pid = parts[1].replace(/"/g, '');
+                        const memory = parts[4].replace(/"/g, '');
+                        
+                        // Extract just the process name (after the last backslash or forward slash)
+                        let name = fullName;
+                        if (fullName.includes('\\')) {
+                            name = fullName.split('\\').pop();
+                        } else if (fullName.includes('/')) {
+                            name = fullName.split('/').pop();
+                        }
+                        // Remove .exe extension if present
+                        if (name.endsWith('.exe')) {
+                            name = name.slice(0, -4);
+                        }
+                        
+                        if (name && pid && !isNaN(parseInt(pid))) {
+                            processes.push({
+                                name: name,
+                                pid: pid,
+                                memory: memory,
+                                cpu: 'N/A' // Windows tasklist doesn't show CPU
+                            });
+                        }
+                    }
+                });
+            } else {
+                // Parse macOS/Linux ps aux output
+                const lines = output.trim().split('\n');
+                lines.slice(1).forEach(line => { // Skip header
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length >= 11) {
+                        const user = parts[0];
+                        const pid = parts[1];
+                        const cpu = parts[2];
+                        const memory = parts[3];
+                        const fullCommand = parts.slice(10).join(' ');
+                        
+                        // Better process name extraction for macOS/Linux
+                        let name = extractProcessName(fullCommand);
+                        
+                        if (name && pid && !isNaN(parseInt(pid))) {
+                            processes.push({
+                                name: name,
+                                pid: pid,
+                                cpu: cpu + '%',
+                                memory: memory + '%'
+                            });
+                        }
+                    }
+                });
+            }
+            
+            // Sort alphabetically by process name and limit to top 20 processes
+            return processes
+                .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()))
+                .slice(0, 20);
+        }
+
+        function extractProcessName(fullCommand) {
+            // Common process names to look for
+            const commonProcesses = [
+                'firefox', 'chrome', 'safari', 'electron', 'node', 'python', 'java',
+                'bash', 'zsh', 'sh', 'csh', 'tcsh', 'ksh', 'fish',
+                'vim', 'nano', 'emacs', 'code', 'sublime',
+                'git', 'docker', 'kubectl', 'npm', 'yarn',
+                'mysql', 'postgres', 'redis', 'mongodb',
+                'nginx', 'apache', 'httpd', 'lighttpd',
+                'systemd', 'launchd', 'init', 'upstart',
+                'finder', 'dock', 'spotlight', 'siri',
+                'terminal', 'iterm', 'hyper', 'alacritty',
+                'slack', 'discord', 'teams', 'zoom', 'skype',
+                'spotify', 'itunes', 'vlc', 'quicktime',
+                'photoshop', 'illustrator', 'figma', 'sketch',
+                'xcode', 'android', 'flutter', 'react',
+                'webpack', 'babel', 'eslint', 'prettier'
+            ];
+
+            // First, try to find a common process name in the command
+            for (const processName of commonProcesses) {
+                if (fullCommand.toLowerCase().includes(processName)) {
+                    return processName;
+                }
+            }
+
+            // If no common process found, try to extract from path
+            let name = fullCommand;
+            
+            // Remove common path prefixes
+            name = name.replace(/^\/usr\/bin\//, '');
+            name = name.replace(/^\/usr\/sbin\//, '');
+            name = name.replace(/^\/bin\//, '');
+            name = name.replace(/^\/sbin\//, '');
+            name = name.replace(/^\/System\/Library\//, '');
+            name = name.replace(/^\/Library\//, '');
+            name = name.replace(/^\/Applications\//, '');
+            
+            // Get the last part after any slash
+            if (name.includes('/')) {
+                name = name.split('/').pop();
+            }
+            
+            // Remove any arguments or parameters
+            if (name.includes(' ')) {
+                name = name.split(' ')[0];
+            }
+            
+            // Remove common extensions
+            name = name.replace(/\.(exe|app|bundle|framework)$/, '');
+            
+            // Filter out very long names (likely paths or profile directories)
+            if (name.length > 20) {
+                return null;
+            }
+            
+            // Filter out names that look like random strings or hashes
+            if (/^[a-f0-9]{8,}$/i.test(name) || /^[a-z0-9]{16,}$/i.test(name)) {
+                return null;
+            }
+            
+            return name;
+        }
+
+        function createProcessTable(processes) {
+            if (processes.length === 0) {
+                return '<div class="error">No processes found</div>';
+            }
+
+            let tableHTML = `
+                <table class="process-table">
+                    <thead>
+                        <tr>
+                            <th>Process Name</th>
+                            <th>PID</th>
+                            <th>CPU</th>
+                            <th>Memory</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            processes.forEach(proc => {
+                tableHTML += `
+                    <tr>
+                        <td>${proc.name}</td>
+                        <td class="pid">${proc.pid}</td>
+                        <td class="cpu">${proc.cpu}</td>
+                        <td class="memory">${proc.memory}</td>
+                    </tr>
+                `;
+            });
+
+            tableHTML += '</tbody></table>';
+            
+            // Add calculator button at the bottom
+            tableHTML += `
+                <div style="text-align: center; margin-top: 1rem;">
+                    <button class="calculator-btn" onclick="launchCalculator()">🧮 Calculator</button>
+                </div>
+            `;
+            
+            return tableHTML;
+        }
+
+        async function updateProcessList() {
+            try {
+                const output = await getProcessList();
+                const processes = parseProcessList(output, process.platform);
+                const tableHTML = createProcessTable(processes);
+                
+                document.getElementById('processTableContainer').innerHTML = tableHTML;
+                
+                const now = new Date();
+                document.getElementById('lastRefresh').textContent = 
+                    `Last updated: ${now.toLocaleTimeString()}`;
+            } catch (error) {
+                console.error('Error fetching processes:', error);
+                document.getElementById('processTableContainer').innerHTML = 
+                    '<div class="error">Error loading processes: ' + error.message + '</div>';
+            }
+        }
+
+        // Update process list every 5 seconds
+        updateProcessList(); // Initial load
+        setInterval(updateProcessList, 5000);
+
+        function launchCalculator() {
+            if (process.platform === 'darwin') {
+                // macOS
+                exec('open -a Calculator', (error) => {
+                    if (error) {
+                        console.error('Error launching calculator:', error);
+                        alert('Error launching calculator: ' + error.message);
+                    } else {
+                        console.log('Calculator launched successfully');
+                    }
+                });
+            } else if (process.platform === 'win32') {
+                // Windows
+                exec('calc', (error) => {
+                    if (error) {
+                        console.error('Error launching calculator:', error);
+                        alert('Error launching calculator: ' + error.message);
+                    } else {
+                        console.log('Calculator launched successfully');
+                    }
+                });
+            } else {
+                // Linux
+                exec('gnome-calculator', (error) => {
+                    if (error) {
+                        // Try alternative calculators
+                        exec('kcalc', (error2) => {
+                            if (error2) {
+                                console.error('Error launching calculator:', error2);
+                                alert('Error launching calculator: ' + error2.message);
+                            } else {
+                                console.log('Calculator launched successfully');
+                            }
+                        });
+                    } else {
+                        console.log('Calculator launched successfully');
+                    }
+                });
+            }
+        }
+
+        // Add some interactivity
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Process monitor loaded successfully!');
+        });
+    </script>
+</body>
+</html> 
